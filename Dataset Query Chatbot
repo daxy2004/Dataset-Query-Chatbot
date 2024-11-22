@@ -1,0 +1,233 @@
+import pandas as pd
+import gradio as gr
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+# Global variable to store the current dataset
+global_df = None
+
+def handle_missing_values(df, method='auto', fill_value=None):
+    if df is None:
+        return "No dataset available."
+
+    # Get missing value information
+    missing_info = df.isnull().sum()
+    missing_columns = missing_info[missing_info > 0]
+
+    if missing_columns.empty:
+        return "No missing values to handle."
+
+    # Different replacement methods
+    results = []
+    for column in missing_columns.index:
+        try:
+            if method == 'auto':
+                # Automatic method based on column type
+                if pd.api.types.is_numeric_dtype(df[column]):
+                    # Use median for numeric columns (more robust to outliers)
+                    fill_val = df[column].median()
+                    df[column].fillna(fill_val, inplace=True)
+                    results.append(f"- {column}: filled with median ({fill_val})")
+                elif pd.api.types.is_categorical_dtype(df[column]) or df[column].dtype == 'object':
+                    # Use mode for categorical columns
+                    fill_val = df[column].mode()[0]
+                    df[column].fillna(fill_val, inplace=True)
+                    results.append(f"- {column}: filled with mode ({fill_val})")
+
+            elif method == 'mean' and pd.api.types.is_numeric_dtype(df[column]):
+                # Mean for numeric columns
+                fill_val = df[column].mean()
+                df[column].fillna(fill_val, inplace=True)
+                results.append(f"- {column}: filled with mean ({fill_val})")
+
+            elif method == 'median' and pd.api.types.is_numeric_dtype(df[column]):
+                # Median for numeric columns
+                fill_val = df[column].median()
+                df[column].fillna(fill_val, inplace=True)
+                results.append(f"- {column}: filled with median ({fill_val})")
+
+            elif method == 'mode':
+                # Mode for all column types
+                fill_val = df[column].mode()[0]
+                df[column].fillna(fill_val, inplace=True)
+                results.append(f"- {column}: filled with mode ({fill_val})")
+
+            elif method == 'custom' and fill_value is not None:
+                # Custom fill value
+                df[column].fillna(fill_value, inplace=True)
+                results.append(f"- {column}: filled with custom value ({fill_value})")
+
+            else:
+                results.append(f"- {column}: unable to fill (incompatible method)")
+
+        except Exception as e:
+            results.append(f"- {column}: error filling ({str(e)})")
+
+    # Add visualization steps when using mode
+    if method == 'mode':
+        results.append("\nVisualization Steps after Handling Missing Values:")
+        results.append("1. Create a boxplot to check data distribution")
+        results.append("2. Generate a correlation heatmap for numeric columns")
+        results.append("3. Create bar plots for categorical columns")
+        results.append("4. Use pair plots to understand relationships between variables")
+
+    return "Missing values handling results:\n" + "\n".join(results)
+
+def visualize_dataset(df, visualization_type='auto'):
+    """Generate visualizations for the dataset"""
+    if df is None:
+        return "No dataset available for visualization."
+
+    # Create a directory for plots if it doesn't exist
+    os.makedirs('plots', exist_ok=True)
+
+    # Reset previous plots
+    plt.close('all')
+
+    plot_paths = []
+
+    # Auto visualization strategy
+    if visualization_type == 'auto':
+        # Numeric columns visualization
+        numeric_columns = df.select_dtypes(include=['int64', 'float64']).columns
+
+        if not numeric_columns.empty:
+            # Boxplot for numeric columns
+            plt.figure(figsize=(12, 6))
+            df[numeric_columns].boxplot()
+            plt.title('Boxplot of Numeric Columns')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plot_path = 'plots/numeric_boxplot.png'
+            plt.savefig(plot_path)
+            plot_paths.append(plot_path)
+            plt.close()
+
+            # Correlation heatmap (if multiple numeric columns)
+            if len(numeric_columns) > 1:
+                plt.figure(figsize=(10, 8))
+                correlation_matrix = df[numeric_columns].corr()
+                sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0)
+                plt.title('Correlation Heatmap')
+                plt.tight_layout()
+                plot_path = 'plots/correlation_heatmap.png'
+                plt.savefig(plot_path)
+                plot_paths.append(plot_path)
+                plt.close()
+
+        # Categorical columns visualization
+        categorical_columns = df.select_dtypes(include=['object', 'category']).columns
+
+        if not categorical_columns.empty:
+            # Count plots for categorical columns
+            for column in categorical_columns[:3]:  # Limit to first 3 categorical columns
+                plt.figure(figsize=(10, 6))
+                df[column].value_counts().plot(kind='bar')
+                plt.title(f'Distribution of {column}')
+                plt.xlabel(column)
+                plt.ylabel('Count')
+                plt.tight_layout()
+                plot_path = f'plots/categorical_{column}_distribution.png'
+                plt.savefig(plot_path)
+                plot_paths.append(plot_path)
+                plt.close()
+
+    return plot_paths
+
+def chatbot(query, df):
+    global global_df
+
+    if df is None:
+        return "Please upload a dataset first.", None
+
+    query = query.lower()
+
+    # Missing values handling with different methods
+    if "handle missing values" in query:
+        if "with mean" in query:
+            result = handle_missing_values(global_df, method='mean')
+        elif "with median" in query:
+            result = handle_missing_values(global_df, method='median')
+        elif "with mode" in query:
+            result = handle_missing_values(global_df, method='mode')
+        else:
+            # Default auto method
+            result = handle_missing_values(global_df, method='auto')
+        return result, None
+
+    # Dataset information queries
+    if "how many rows and columns" in query or "rows and columns" in query:
+        rows, columns = df.shape
+        return f"The dataset has {rows} rows and {columns} columns.", None
+
+    if "are there any missing values" in query or "missing values" in query:
+        missing_info = df.isnull().sum()
+        missing_columns = missing_info[missing_info > 0]
+        if missing_columns.empty:
+            return "There are no missing values in the dataset.", None
+        return f"Columns with missing values:\n{missing_columns.to_string()}", None
+
+    # Dataset details query
+    if "dataset details" in query:
+        # Provide comprehensive dataset information
+        details = []
+        details.append(f"Total Rows: {df.shape[0]}")
+        details.append(f"Total Columns: {df.shape[1]}")
+        details.append("\nColumn Types:")
+        details.append(df.dtypes.to_string())
+
+        return "\n".join(details), None
+
+    # Visualization queries
+    if "steps to visualize" in query or "auto visualize" in query:
+        plot_paths = visualize_dataset(global_df)
+        return "Dataset auto-visualization complete. Plots saved in 'plots' directory.", plot_paths
+
+    # Fallback response
+    return "Sorry, I didn't understand your query. Try asking about rows, columns, missing values, or visualization.", None
+
+def chat_interface(input_text, uploaded_file):
+    global global_df
+
+    # Load dataset if uploaded
+    if uploaded_file is not None:
+        try:
+            global_df = pd.read_csv(uploaded_file)
+        except Exception as e:
+            return f"Error uploading file: {str(e)}", None
+
+    # Process query
+    response, plot_paths = chatbot(input_text, global_df)
+
+    if plot_paths:
+        return response, plot_paths
+    return response, None
+
+# Create Gradio interface
+interface = gr.Interface(
+    fn=chat_interface,
+    inputs=[
+        gr.Textbox(label="Ask a question about the dataset"),
+        gr.File(label="Upload CSV File", type="filepath")
+    ],
+    outputs=[
+        gr.Textbox(label="Response"),
+        gr.Gallery(label="Visualizations")
+    ],
+    title="Dataset Query Chatbot",
+    description=(
+        "Upload a CSV file and ask questions:\n"
+        "- 'How many rows and columns?'\n"
+        "- 'Are there any missing values?'\n"
+        "- 'Handle missing values'\n"
+        "- 'Handle missing values with mean'\n"
+        "- 'Handle missing values with median'\n"
+        "- 'Handle missing values with mode'\n"
+        "- 'Steps to visualize the dataset'\n"
+        "- 'Auto visualize the dataset'\n"
+        "- 'Dataset details'"
+    )
+)
+
+interface.launch()
